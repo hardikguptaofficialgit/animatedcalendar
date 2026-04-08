@@ -24,6 +24,14 @@ import { accentValues, applyThemeTokens, isAccentColor, isThemeMode } from "@/li
 const today = toIsoDate(new Date());
 const currentMonth = getMonthKey(new Date());
 
+function getDefaultNavigationMode(): CalendarState["navigationMode"] {
+  if (typeof window === "undefined") {
+    return "flip";
+  }
+
+  return window.matchMedia("(max-width: 768px)").matches ? "buttons" : "flip";
+}
+
 function snapshot(state: CalendarState): HistoryState {
   return {
     notes: state.notes,
@@ -216,7 +224,7 @@ const initialState: CalendarState = {
   ranges: [],
   multiRangeEnabled: false,
   viewMode: "month",
-  navigationMode: "flip",
+  navigationMode: getDefaultNavigationMode(),
   theme: "light",
   accent: "teal",
   soundEnabled: true,
