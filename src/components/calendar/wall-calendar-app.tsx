@@ -103,6 +103,7 @@ export function WallCalendarApp() {
   const flipVelocity = useRef(0);
   const lastMoveTime = useRef(0);
   const lastMoveProgress = useRef(0);
+  const dragDisplayProgress = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
   const suspensionFrameRef = useRef<number | null>(null);
   const pendingMonthShiftRef = useRef(false);
@@ -237,6 +238,7 @@ export function WallCalendarApp() {
     flipProgress.current = 0;
     flipVelocity.current = 0;
     lastMoveProgress.current = 0;
+    dragDisplayProgress.current = 0;
     setIsFlippingActive(false);
   };
 
@@ -247,6 +249,7 @@ export function WallCalendarApp() {
     hasStartedDrag.current = false;
     isAnimating.current = false;
     isDragging.current = false;
+    dragDisplayProgress.current = 0;
     setIsFlippingActive(false);
   };
 
@@ -473,7 +476,15 @@ export function WallCalendarApp() {
         return;
       }
 
-      if (isDragging.current || isAnimating.current || !frontTex || !backTex || !revealTex || isSyncingMonth) {
+      if (
+        calendar.navigationMode !== "flip" ||
+        isDragging.current ||
+        isAnimating.current ||
+        !frontTex ||
+        !backTex ||
+        !revealTex ||
+        isSyncingMonth
+      ) {
         return;
       }
 
@@ -496,6 +507,7 @@ export function WallCalendarApp() {
       flipVelocity.current = 0;
       lastMoveTime.current = performance.now();
       lastMoveProgress.current = 0;
+      dragDisplayProgress.current = 0;
       el.setPointerCapture(e.pointerId);
     };
 
@@ -512,6 +524,7 @@ export function WallCalendarApp() {
           setIsFlippingActive(true);
           startY.current = e.clientY + 14;
           flipProgress.current = 0.01;
+          dragDisplayProgress.current = 0.01;
         } else {
           return;
         }
@@ -519,12 +532,14 @@ export function WallCalendarApp() {
 
       const newY = Math.max(0, e.clientY - el.getBoundingClientRect().top);
       const nextProgress = Math.max(0, Math.min(1, 1 - newY / bounds.current.h));
+      const filteredProgress = THREE.MathUtils.lerp(dragDisplayProgress.current, nextProgress, 0.72);
       const now = performance.now();
       const dt = Math.max(1, now - lastMoveTime.current) / 1000;
-      flipVelocity.current = (nextProgress - lastMoveProgress.current) / dt;
+      flipVelocity.current = (filteredProgress - lastMoveProgress.current) / dt;
       lastMoveTime.current = now;
-      lastMoveProgress.current = nextProgress;
-      flipProgress.current = nextProgress;
+      lastMoveProgress.current = filteredProgress;
+      dragDisplayProgress.current = filteredProgress;
+      flipProgress.current = filteredProgress;
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -544,7 +559,7 @@ export function WallCalendarApp() {
         return;
       }
 
-      const target = flipProgress.current > 0.24 || flipVelocity.current > 1.2 ? 1 : 0;
+      const target = flipProgress.current > 0.2 || flipVelocity.current > 0.92 ? 1 : 0;
       if (el.hasPointerCapture(e.pointerId)) {
         el.releasePointerCapture(e.pointerId);
       }
@@ -555,11 +570,11 @@ export function WallCalendarApp() {
           return;
         }
 
-        const dt = Math.min(0.016, (now - previousTime) / 1000);
+        const dt = Math.min(0.02, (now - previousTime) / 1000);
         previousTime = now;
 
-        const stiffness = 120;
-        const damping = 16;
+        const stiffness = 76;
+        const damping = 12.6;
         const dist = target - flipProgress.current;
         const acceleration = dist * stiffness - flipVelocity.current * damping;
 
@@ -570,7 +585,7 @@ export function WallCalendarApp() {
           flipVelocity.current *= 0.5;
         }
 
-        if (Math.abs(dist) < 0.0015 && Math.abs(flipVelocity.current) < 0.012) {
+        if (Math.abs(dist) < 0.0022 && Math.abs(flipVelocity.current) < 0.02) {
           if (target === 1) {
             stopAnimation();
             flipProgress.current = 1;
@@ -626,7 +641,9 @@ export function WallCalendarApp() {
       return;
     }
     calendar.shiftMonth(amount);
-    void sound.playMonthTurn();
+    if (calendar.navigationMode === "flip") {
+      void sound.playMonthTurn();
+    }
   }, [calendar, isFlippingActive, isSyncingMonth, sound]);
 
   useSwipeNavigation(containerRef, {
@@ -716,8 +733,6 @@ export function WallCalendarApp() {
   };
 
   const monthDate = parseMonthKey(calendar.visibleMonth);
-  const monthValue = monthDate.getUTCMonth();
-  const yearValue = monthDate.getUTCFullYear();
 
   // 44 coil rings across the top binding strip
   const rings = Array.from({ length: 44 });
@@ -725,6 +740,7 @@ export function WallCalendarApp() {
   const activeRangeStart = calendar.draftRangeStart;
   const pendingRangeDays =
     calendar.hoverRange && activeRangeStart ? daysBetween(calendar.hoverRange.start, calendar.hoverRange.end) : 0;
+  const isFlipNavigation = calendar.navigationMode === "flip";
 
   const beginRangeSelection = () => {
     const seedDate = calendar.selectedDate ?? calendar.focusedDate ?? `${calendar.visibleMonth}-01`;
@@ -748,7 +764,7 @@ export function WallCalendarApp() {
           setShowSettings(true);
           setShowShortcuts(false);
         }}
-        className={`calendar-edge-trigger calendar-edge-trigger-left fixed bottom-20 left-0 z-40 flex h-10 w-9 items-center justify-center rounded-r-2xl border border-l-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 hover:scale-110 active:scale-95 md:hidden ${showSettings ? "pointer-events-none opacity-0" : "opacity-100"}`}
+        className={`calendar-edge-trigger calendar-edge-trigger-left fixed bottom-20 left-0 z-40 flex h-10 w-9 items-center justify-center rounded-r-2xl border border-l-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 active:scale-95 md:hidden ${showSettings ? "pointer-events-none opacity-0" : "opacity-100"}`}
         aria-label="Open settings"
       >
         <Settings size={19} strokeWidth={2.35} />
@@ -762,7 +778,7 @@ export function WallCalendarApp() {
           setShowSettings(true);
           setShowShortcuts(false);
         }}
-        className={`calendar-doodle-trigger calendar-doodle-trigger-left calendar-edge-trigger calendar-edge-trigger-left fixed left-0 top-1/2 z-40 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 hover:-translate-y-1/2 hover:scale-110 active:scale-95 md:flex ${showSettings ? "pointer-events-none opacity-0" : "opacity-100"}`}
+        className={`calendar-doodle-trigger calendar-doodle-trigger-left calendar-edge-trigger calendar-edge-trigger-left fixed left-0 top-1/2 z-40 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-r-2xl border border-l-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 active:scale-95 md:flex ${showSettings ? "pointer-events-none opacity-0" : "opacity-100"}`}
         aria-label="Open settings"
       >
         <Settings size={21} strokeWidth={2.35} />
@@ -821,8 +837,8 @@ export function WallCalendarApp() {
             </div>
           </div>
 
-          <div className="calendar-hanger-stage relative z-10 mx-auto w-full max-w-[520px]">
-            <div className="calendar-hanger-anchor" aria-hidden="true" />
+	          <div className="calendar-hanger-stage relative z-10 mx-auto w-full max-w-[520px]">
+	            <div className="calendar-hanger-anchor" aria-hidden="true" />
             <div
               ref={hangingBodyRef}
               className="calendar-hanging-body"
@@ -875,14 +891,12 @@ export function WallCalendarApp() {
                   • Has a highlight stripe to simulate the cylindrical metal tube
                   ============================================================
                 */}
-                <div
-                  className="pointer-events-none absolute left-0 right-0 top-[-20px] z-[35] flex justify-between px-[22px]"
-                  style={{ height: 42 }}
-                  aria-hidden="true"
-                >
-                  {rings.map((_, i) => (
-                    <CoilRing key={i} />
-                  ))}
+                <div className="calendar-coil-strip" aria-hidden="true">
+                  <div className="calendar-coil-strip-inner" style={{ height: 42 }}>
+                    {rings.map((_, i) => (
+                      <CoilRing key={i} />
+                    ))}
+                  </div>
                 </div>
 
                 {/* Card inner top fade */}
@@ -891,10 +905,13 @@ export function WallCalendarApp() {
                   <div className="absolute inset-x-0 bottom-0 h-[8px] bg-[linear-gradient(to_bottom,rgba(0,0,0,0.16),rgba(0,0,0,0))]" />
                 </div>
 
-                <div ref={cardRef} className="relative w-full touch-none select-none rounded-none">
-                  <div
-                    className="relative z-[1] h-full w-full select-none overflow-hidden rounded-none bg-white dark:bg-[#1f1f1fc0]"
-                    style={{
+	                <div
+                    ref={cardRef}
+                    className="relative w-full touch-none select-none rounded-none"
+                  >
+	                  <div
+	                    className="relative z-[1] h-full w-full select-none overflow-hidden rounded-none bg-white dark:bg-[#1f1f1fc0]"
+	                    style={{
                       height: bounds.current.h,
                       opacity: isFlippingActive ? 0 : 1,
                       transition: isFlippingActive ? "none" : "opacity 180ms ease",
@@ -919,45 +936,70 @@ export function WallCalendarApp() {
                     />
                   </div>
 
-                  <div
-                    className="pointer-events-none absolute left-1/2 top-0 z-[120] -translate-x-1/2"
-                    style={{
-                      width: bounds.current.w + 220,
-                      height: bounds.current.h + 220,
-                      marginTop: -70,
-                      overflow: "visible",
-                      willChange: "transform, opacity",
-                      opacity: isFlippingActive ? 1 : 0,
-                      visibility: isFlippingActive ? "visible" : "hidden",
-                      transition: isFlippingActive ? "none" : "opacity 120ms ease",
-                    }}
-                  >
-                    <Canvas
-                      dpr={[1, 2]}
-                      gl={{ antialias: true, alpha: true }}
-                      orthographic
-                      camera={{ position: [0, 0, 500], zoom: 1, near: 0.1, far: 2000 }}
-                    >
-                      <group position={[0, 40, 0]}>
-                        <RealisticPageMesh
-                          frontTex={frontTex}
-                          backTex={backTex}
-                          revealTex={revealTex}
-                          width={bounds.current.w}
-                          height={bounds.current.h}
-                          flipProgress={flipProgress}
-                          grabRight={grabRight}
-                        />
-                      </group>
-                    </Canvas>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+	                  {isFlipNavigation ? (
+	                    <div
+	                      className="pointer-events-none absolute left-1/2 top-0 z-[120] -translate-x-1/2"
+	                      style={{
+	                        width: bounds.current.w + 220,
+	                        height: bounds.current.h + 220,
+	                        marginTop: -70,
+	                        overflow: "visible",
+	                        willChange: "transform, opacity",
+	                        opacity: isFlippingActive ? 1 : 0,
+	                        visibility: isFlippingActive ? "visible" : "hidden",
+	                        transition: isFlippingActive ? "none" : "opacity 120ms ease",
+	                      }}
+	                    >
+	                      <Canvas
+	                        dpr={[1, 2]}
+	                        gl={{ antialias: true, alpha: true }}
+	                        orthographic
+	                        camera={{ position: [0, 0, 500], zoom: 1, near: 0.1, far: 2000 }}
+	                      >
+	                        <group position={[0, 40, 0]}>
+	                          <RealisticPageMesh
+	                            frontTex={frontTex}
+	                            backTex={backTex}
+	                            revealTex={revealTex}
+	                            width={bounds.current.w}
+	                            height={bounds.current.h}
+	                            flipProgress={flipProgress}
+	                            grabRight={grabRight}
+	                          />
+	                        </group>
+	                      </Canvas>
+	                    </div>
+	                  ) : null}
+	                </div>
+	              </div>
+	            </div>
 
-        <div className="calendar-flip-callout" aria-hidden="true">
+	          {!isFlipNavigation ? (
+	            <div className="calendar-navigation-rail" data-calendar-interactive="true">
+	              <button
+	                type="button"
+	                onClick={() => navigateMonth(-1)}
+	                className="calendar-navigation-button"
+	                aria-label="Go to previous month"
+	              >
+	                <ChevronLeft size={18} strokeWidth={2.2} />
+	                <span>Previous</span>
+	              </button>
+	              <button
+	                type="button"
+	                onClick={() => navigateMonth(1)}
+	                className="calendar-navigation-button"
+	                aria-label="Go to next month"
+	              >
+	                <span>Next</span>
+	                <ChevronRight size={18} strokeWidth={2.2} />
+	              </button>
+	            </div>
+		          ) : null}
+		        </div>
+	          </div>
+
+	        <div className={`calendar-flip-callout ${!isFlipNavigation ? "is-hidden" : ""}`} aria-hidden="true">
           <p className="calendar-flip-callout-text">
             Try Flipping
             <br />
@@ -976,7 +1018,7 @@ export function WallCalendarApp() {
             calendar.setNotesFilter("month");
             calendar.setNotesPanelOpen(true);
           }}
-          className={`calendar-edge-trigger fixed bottom-20 right-2 z-40 flex h-10 w-9 items-center justify-center rounded-l-2xl border border-r-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 hover:scale-110 active:scale-95 md:hidden ${calendar.notesPanelOpen ? "pointer-events-none opacity-0" : "opacity-100"}`}
+          className={`calendar-edge-trigger fixed bottom-20 right-2 z-40 flex h-10 w-9 items-center justify-center rounded-l-2xl border border-r-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 active:scale-95 md:hidden ${calendar.notesPanelOpen ? "pointer-events-none opacity-0" : "opacity-100"}`}
           aria-label="Open notes"
         >
           <ChevronLeft size={22} strokeWidth={2.5} />
@@ -990,7 +1032,7 @@ export function WallCalendarApp() {
             calendar.setNotesFilter("month");
             calendar.setNotesPanelOpen(true);
           }}
-          className={`calendar-edge-trigger fixed right-3 top-1/2 z-40 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-2xl border border-r-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 hover:-translate-y-1/2 hover:scale-110 active:scale-95 md:flex ${calendar.notesPanelOpen ? "pointer-events-none opacity-0" : "opacity-100"}`}
+          className={`calendar-edge-trigger fixed right-3 top-1/2 z-40 hidden h-12 w-12 -translate-y-1/2 items-center justify-center rounded-l-2xl border border-r-0 transition-[transform,background-color,color,box-shadow,border-color,opacity] duration-200 active:scale-95 md:flex ${calendar.notesPanelOpen ? "pointer-events-none opacity-0" : "opacity-100"}`}
           aria-label="Open notes"
         >
           <ChevronLeft size={22} strokeWidth={2.5} />
@@ -1029,8 +1071,8 @@ export function WallCalendarApp() {
                   </button>
                 </div>
 
-                <div className="calendar-scrollbar flex-1 space-y-5 overflow-y-auto px-5 py-4">
-                  <SettingsGroup title="Appearance">
+	                <div className="calendar-scrollbar flex-1 space-y-5 overflow-y-auto px-5 py-4">
+	                  <SettingsGroup title="Appearance">
                     <SettingsRow
                       label={theme.mode === "light" ? "Dark mode" : "Light mode"}
                       icon={theme.mode === "light" ? <Moon size={14} strokeWidth={2} /> : <Sun size={14} strokeWidth={2} />}
@@ -1040,10 +1082,25 @@ export function WallCalendarApp() {
                       label={theme.soundEnabled ? "Sound on" : "Sound off"}
                       icon={theme.soundEnabled ? <Volume2 size={14} strokeWidth={2} /> : <VolumeX size={14} strokeWidth={2} />}
                       onClick={() => theme.setSoundEnabled(!theme.soundEnabled)}
-                    />
-                  </SettingsGroup>
+	                    />
+	                  </SettingsGroup>
 
-                  <SettingsGroup title="Actions">
+	                  <SettingsGroup title="Navigation">
+	                    <SettingsSegmentedControl
+	                      label="Month switching"
+	                      value={calendar.navigationMode}
+	                      options={[
+	                        { value: "flip", label: "Flip animation" },
+	                        { value: "buttons", label: "Normal buttons" },
+	                      ]}
+	                      onChange={(value) => {
+	                        calendar.setNavigationMode(value as typeof calendar.navigationMode);
+	                        resetFlipInteraction();
+	                      }}
+	                    />
+	                  </SettingsGroup>
+
+	                  <SettingsGroup title="Actions">
                     <SettingsRow label="Jump to today" icon={<CalendarDays size={14} strokeWidth={2} />} onClick={jumpToToday} />
                     <SettingsRow
                       label="Keyboard shortcuts"
@@ -1057,59 +1114,21 @@ export function WallCalendarApp() {
                     <SettingsRow label="Redo" icon={<Redo2 size={14} strokeWidth={2} />} onClick={calendar.redo} />
                   </SettingsGroup>
 
-                  <SettingsGroup title="Customize">
-                    <div className="space-y-2">
-                      <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Accent color</label>
-                      <select
-                        value={theme.accent}
-                        onChange={(event) => theme.setAccent(event.target.value as typeof theme.accent)}
-                        className="w-full rounded-lg border border-line bg-paper/50 px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
-                      >
-                        <option value="teal">Teal</option>
-                        <option value="brick">Brick</option>
-                        <option value="amber">Amber</option>
-                        <option value="slate">Slate</option>
-                      </select>
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Month</label>
-                        <select
-                          aria-label="Jump to month"
-                          value={monthValue}
-                          onChange={(event) =>
-                            calendar.setVisibleMonth(`${yearValue}-${String(Number(event.target.value) + 1).padStart(2, "0")}`)
-                          }
-                          className="w-full rounded-lg border border-line bg-paper/50 px-2.5 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
-                        >
-                          {Array.from({ length: 12 }, (_, month) => (
-                            <option key={month} value={month}>
-                              {new Intl.DateTimeFormat("en-US", { month: "short", timeZone: "UTC" }).format(
-                                new Date(Date.UTC(2026, month, 1))
-                              )}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Year</label>
-                        <select
-                          aria-label="Jump to year"
-                          value={yearValue}
-                          onChange={(event) =>
-                            calendar.setVisibleMonth(`${event.target.value}-${String(monthValue + 1).padStart(2, "0")}`)
-                          }
-                          className="w-full rounded-lg border border-line bg-paper/50 px-2.5 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
-                        >
-                          {Array.from({ length: 12 }, (_, offset) => yearValue - 5 + offset).map((year) => (
-                            <option key={year} value={year}>
-                              {year}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </SettingsGroup>
+	                  <SettingsGroup title="Customize">
+	                    <div className="space-y-2">
+	                      <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Accent color</label>
+	                      <select
+	                        value={theme.accent}
+	                        onChange={(event) => theme.setAccent(event.target.value as typeof theme.accent)}
+	                        className="w-full rounded-lg border border-line bg-paper/50 px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
+	                      >
+	                        <option value="teal">Teal</option>
+	                        <option value="brick">Brick</option>
+	                        <option value="amber">Amber</option>
+	                        <option value="slate">Slate</option>
+	                      </select>
+	                    </div>
+	                  </SettingsGroup>
                 </div>
               </motion.aside>
             </>
@@ -1187,6 +1206,8 @@ export function WallCalendarApp() {
           )}
         </AnimatePresence>
       </div>
+
+    
 
       <ContextMenu />
     </main>
@@ -1360,6 +1381,43 @@ function SettingsRow({
       <span className="text-ink/50 transition-colors group-hover:text-accent">{icon}</span>
       {label}
     </button>
+  );
+}
+
+function SettingsSegmentedControl({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-line bg-paper/35 p-1.5">
+      <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">{label}</p>
+      <div className="grid grid-cols-2 gap-1">
+        {options.map((option) => {
+          const active = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-all ${
+                active
+                  ? "bg-card text-accent shadow-[0_8px_18px_rgba(0,0,0,0.12)]"
+                  : "text-ink/65 hover:bg-card/65 hover:text-ink"
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

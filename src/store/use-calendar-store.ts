@@ -66,6 +66,7 @@ function sanitizeImportedState(
     | "accent"
     | "soundEnabled"
     | "viewMode"
+    | "navigationMode"
     | "multiRangeEnabled"
     | "notesFilter"
     | "filterDate"
@@ -83,6 +84,7 @@ function sanitizeImportedState(
   | "accent"
   | "soundEnabled"
   | "viewMode"
+  | "navigationMode"
   | "multiRangeEnabled"
   | "notesFilter"
   | "filterDate"
@@ -181,6 +183,10 @@ function sanitizeImportedState(
     accent: nextAccent,
     soundEnabled: typeof payload.soundEnabled === "boolean" ? payload.soundEnabled : fallback.soundEnabled,
     viewMode: isViewMode(payload.viewMode) ? payload.viewMode : fallback.viewMode,
+    navigationMode:
+      payload.navigationMode === "buttons" || payload.navigationMode === "flip"
+        ? payload.navigationMode
+        : fallback.navigationMode,
     multiRangeEnabled:
       typeof payload.multiRangeEnabled === "boolean" ? payload.multiRangeEnabled : fallback.multiRangeEnabled,
     notesFilter: nextNotesFilter,
@@ -210,6 +216,7 @@ const initialState: CalendarState = {
   ranges: [],
   multiRangeEnabled: false,
   viewMode: "month",
+  navigationMode: "flip",
   theme: "light",
   accent: "teal",
   soundEnabled: true,
@@ -248,6 +255,7 @@ export const useCalendarStore = create<CalendarStore>()(
       },
       setSoundEnabled: (enabled) => set({ soundEnabled: enabled }),
       setViewMode: (mode) => set({ viewMode: mode }),
+      setNavigationMode: (mode) => set({ navigationMode: mode }),
       setMultiRangeEnabled: (enabled) => set({ multiRangeEnabled: enabled }),
       setNotesPanelOpen: (open) => set({ notesPanelOpen: open }),
       startRange: (date) =>
@@ -422,6 +430,7 @@ export const useCalendarStore = create<CalendarStore>()(
         ranges: state.ranges,
         multiRangeEnabled: state.multiRangeEnabled,
         viewMode: state.viewMode,
+        navigationMode: state.navigationMode,
         theme: state.theme,
         accent: state.accent,
         soundEnabled: state.soundEnabled,

@@ -98,27 +98,27 @@ export function RealisticPageMesh({
 
   useFrame((_, delta) => {
     const targetProgress = THREE.MathUtils.clamp(flipProgress.current, 0, 1);
-    displayProgress.current = THREE.MathUtils.damp(displayProgress.current, targetProgress, 35, delta);
+    displayProgress.current = THREE.MathUtils.damp(displayProgress.current, targetProgress, 16, delta);
 
     const progress = displayProgress.current;
     const shapedProgress = THREE.MathUtils.smootherstep(progress, 0, 1);
-    const lateFlipFade = THREE.MathUtils.smoothstep(progress, 0.62, 0.9);
-    const frontFade = THREE.MathUtils.smoothstep(progress, 0.7, 0.96);
+    const lateFlipFade = THREE.MathUtils.smoothstep(progress, 0.68, 0.96);
+    const frontFade = THREE.MathUtils.smoothstep(progress, 0.78, 0.99);
 
     revealedPageMaterial.opacity = THREE.MathUtils.lerp(0.96, 1, THREE.MathUtils.smoothstep(progress, 0.28, 0.7));
-    frontMaterial.opacity = 1 - frontFade * 0.72;
-    backMaterial.opacity = 1 - lateFlipFade * 0.94;
-    foldShadowMaterial.opacity = 0.055 * THREE.MathUtils.smoothstep(progress, 0.04, 0.9);
+    frontMaterial.opacity = 1 - frontFade * 0.64;
+    backMaterial.opacity = 1 - lateFlipFade * 0.9;
+    foldShadowMaterial.opacity = 0.042 * THREE.MathUtils.smoothstep(progress, 0.06, 0.94);
     const pos = geometry.attributes.position;
     const original = geometry.userData.original as Float32Array;
     const direction = grabRight.current ? 1 : -1;
     const topEdge = height / 2;
     const hingeBand = Math.max(16, height * 0.045);
-    const baseRotation = THREE.MathUtils.lerp(0, Math.PI * 0.97, shapedProgress);
-    const dragReach = THREE.MathUtils.lerp(0, 1, THREE.MathUtils.smoothstep(progress, 0.02, 0.24));
-    const controlledCurl = THREE.MathUtils.lerp(0, height * 0.075, THREE.MathUtils.smoothstep(progress, 0.08, 0.9));
-    const spineBow = Math.sin(shapedProgress * Math.PI) * width * 0.015;
-    const undersideLift = Math.sin(shapedProgress * Math.PI) * 1.4;
+    const baseRotation = THREE.MathUtils.lerp(0, Math.PI * 0.948, shapedProgress);
+    const dragReach = THREE.MathUtils.lerp(0, 1, THREE.MathUtils.smoothstep(progress, 0.04, 0.34));
+    const controlledCurl = THREE.MathUtils.lerp(0, height * 0.061, THREE.MathUtils.smoothstep(progress, 0.12, 0.94));
+    const spineBow = Math.sin(shapedProgress * Math.PI) * width * 0.01;
+    const undersideLift = Math.sin(shapedProgress * Math.PI) * 0.95;
 
     for (let i = 0; i < pos.count; i++) {
       const index = i * 3;
@@ -136,8 +136,8 @@ export function RealisticPageMesh({
       const hingeLock = 1 - THREE.MathUtils.smoothstep(hingeDistance, hingeBand * 0.25, hingeBand);
       const xWave = Math.sin(normalizedX * Math.PI);
       const yInfluence = THREE.MathUtils.smoothstep(normalizedY, 0.04, 1);
-      const resistance = THREE.MathUtils.lerp(0.58, 1, dragBias);
-      const localRotation = baseRotation * yInfluence * THREE.MathUtils.lerp(0.88, 1.08, resistance);
+      const resistance = THREE.MathUtils.lerp(0.68, 1, dragBias);
+      const localRotation = baseRotation * yInfluence * THREE.MathUtils.lerp(0.92, 1.01, resistance);
       const pinnedRotation = THREE.MathUtils.lerp(localRotation, 0, hingeLock);
 
       if (pinnedRotation > 0) {
@@ -148,11 +148,11 @@ export function RealisticPageMesh({
           direction *
           dragReach *
           yInfluence *
-          (THREE.MathUtils.lerp(-0.24, 0.24, normalizedX) * width * 0.06 +
-            (dragBias - 0.5) * width * 0.085);
+            (THREE.MathUtils.lerp(-0.24, 0.24, normalizedX) * width * 0.042 +
+            (dragBias - 0.5) * width * 0.06);
         const curlEnvelope = xWave * yInfluence * resistance;
         vx += sideLead + direction * curlEnvelope * controlledCurl;
-        vz += curlEnvelope * controlledCurl * 0.65;
+        vz += curlEnvelope * controlledCurl * 0.42;
       }
 
       vx += direction * xWave * yInfluence * spineBow;

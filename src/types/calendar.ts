@@ -1,5 +1,6 @@
 export type ThemeMode = "light" | "dark";
 export type ViewMode = "month" | "week";
+export type NavigationMode = "flip" | "buttons";
 export type AccentColor = "teal" | "brick" | "amber" | "slate";
 export type Category = "holiday" | "meeting" | "milestone" | "personal";
 export type NoteScope = "month" | "range" | "day";
@@ -63,6 +64,7 @@ export interface CalendarState {
   ranges: DateRange[];
   multiRangeEnabled: boolean;
   viewMode: ViewMode;
+  navigationMode: NavigationMode;
   theme: ThemeMode;
   accent: AccentColor;
   soundEnabled: boolean;
@@ -86,6 +88,7 @@ export interface CalendarActions {
   setAccent: (accent: AccentColor) => void;
   setSoundEnabled: (enabled: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
+  setNavigationMode: (mode: NavigationMode) => void;
   setMultiRangeEnabled: (enabled: boolean) => void;
   setNotesPanelOpen: (open: boolean) => void;
   startRange: (date: string) => void;
