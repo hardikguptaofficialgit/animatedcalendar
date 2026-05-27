@@ -10,6 +10,8 @@ interface RealisticPageMeshProps {
   height: number;
   flipProgress: React.MutableRefObject<number>;
   grabRight: React.MutableRefObject<boolean>;
+  isDragging: React.MutableRefObject<boolean>;
+  isAnimating: React.MutableRefObject<boolean>;
 }
 
 export function RealisticPageMesh({
@@ -20,6 +22,8 @@ export function RealisticPageMesh({
   height,
   flipProgress,
   grabRight,
+  isDragging,
+  isAnimating,
 }: RealisticPageMeshProps) {
   const rigRef = useRef<THREE.Group>(null);
   const pageGroupRef = useRef<THREE.Group>(null);
@@ -30,7 +34,7 @@ export function RealisticPageMesh({
   const { gl } = useThree();
 
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(width, height, 48, 64);
+    const geo = new THREE.PlaneGeometry(width, height, 32, 42);
     geo.userData.original = new Float32Array(geo.attributes.position.array as ArrayLike<number>);
     return geo;
   }, [width, height]);
@@ -110,9 +114,31 @@ export function RealisticPageMesh({
 
   useFrame((_, delta) => {
     const targetProgress = THREE.MathUtils.clamp(flipProgress.current, 0, 1);
-    displayProgress.current = THREE.MathUtils.damp(displayProgress.current, targetProgress, 16, delta);
+    if (isDragging.current || isAnimating.current) {
+      displayProgress.current = targetProgress;
+    } else {
+      displayProgress.current = THREE.MathUtils.damp(displayProgress.current, targetProgress, 28, delta);
+    }
 
     const progress = displayProgress.current;
+    if (progress <= 0.0005) {
+      const pos = geometry.attributes.position as THREE.BufferAttribute;
+      const positionArray = pos.array as Float32Array;
+      const original = geometry.userData.original as Float32Array;
+      positionArray.set(original);
+      pos.needsUpdate = true;
+      if (revealedMeshRef.current) {
+        revealedMeshRef.current.visible = false;
+      }
+      if (frontMeshRef.current) {
+        frontMeshRef.current.visible = false;
+      }
+      if (backMeshRef.current) {
+        backMeshRef.current.visible = false;
+      }
+      foldShadowMaterial.opacity = 0;
+      return;
+    }
     const shapedProgress = THREE.MathUtils.smootherstep(progress, 0, 1);
     const shadowFade = THREE.MathUtils.smoothstep(progress, 0.14, 0.94);
 
@@ -135,9 +161,9 @@ export function RealisticPageMesh({
     const direction = grabRight.current ? 1 : -1;
     const topEdge = height / 2;
     const hingeBand = Math.max(16, height * 0.045);
-    const baseRotation = THREE.MathUtils.lerp(0, Math.PI * 0.948, shapedProgress);
-    const dragReach = THREE.MathUtils.lerp(0, 1, THREE.MathUtils.smoothstep(progress, 0.04, 0.34));
-    const controlledCurl = THREE.MathUtils.lerp(0, height * 0.061, THREE.MathUtils.smoothstep(progress, 0.12, 0.94));
+    const baseRotation = THREE.MathUtils.lerp(0, Math.PI * 0.965, shapedProgress);
+    const dragReach = THREE.MathUtils.lerp(0, 1, THREE.MathUtils.smoothstep(progress, 0.03, 0.38));
+    const controlledCurl = THREE.MathUtils.lerp(0, height * 0.068, THREE.MathUtils.smoothstep(progress, 0.1, 0.96));
     const spineBow = Math.sin(shapedProgress * Math.PI) * width * 0.01;
     const undersideLift = Math.sin(shapedProgress * Math.PI) * 0.95;
 

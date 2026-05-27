@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { OverlayPortal } from "./overlay-portal";
 import {
   CalendarDays,
   ChevronLeft,
@@ -90,8 +90,9 @@ export function WallCalendarApp() {
   const [backTex, setBackTex] = useState<THREE.Texture | null>(null);
   const [revealTex, setRevealTex] = useState<THREE.Texture | null>(null);
   const [isFlippingActive, setIsFlippingActive] = useState(false);
+  const [isFlipSceneActive, setIsFlipSceneActive] = useState(false);
+  const [flipCanvasMounted, setFlipCanvasMounted] = useState(false);
   const [isSyncingMonth, setIsSyncingMonth] = useState(false);
-  const [isHoveringCard, setIsHoveringCard] = useState(false);
 
   const flipProgress = useRef(0);
   const grabRight = useRef(false);
@@ -130,6 +131,17 @@ export function WallCalendarApp() {
   const nextPage = useMemo(
     () => buildCalendarPageData(nextMonthKey, calendar.notes, calendar.ranges, calendar.monthImages),
     [calendar.monthImages, calendar.notes, calendar.ranges, nextMonthKey]
+  );
+  const textureCaptureKey = `${calendar.visibleMonth}|${nextMonthKey}|${theme.mode}`;
+  const notesTextureVersion = useMemo(() => {
+    const noteStamp = calendar.notes.reduce((stamp, note) => stamp + note.updatedAt, 0);
+    const rangeStamp = calendar.ranges.map((range) => `${range.id}:${range.start}:${range.end}`).join("|");
+    const imageStamp = Object.values(calendar.monthImages).join("|");
+    return `${noteStamp}|${rangeStamp}|${imageStamp}`;
+  }, [calendar.monthImages, calendar.notes, calendar.ranges]);
+  const canvasDpr = useMemo(
+    () => Math.min(1.75, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1),
+    []
   );
 
   const disposeTexture = (texture: THREE.Texture | null) => {
@@ -240,6 +252,7 @@ export function WallCalendarApp() {
     lastMoveProgress.current = 0;
     dragDisplayProgress.current = 0;
     setIsFlippingActive(false);
+    setIsFlipSceneActive(false);
   };
 
   const finalizeFlip = () => {
@@ -251,81 +264,103 @@ export function WallCalendarApp() {
     isDragging.current = false;
     dragDisplayProgress.current = 0;
     setIsFlippingActive(false);
+    setIsFlipSceneActive(false);
   };
 
-  useEffect(() => {
-    let active = true;
-    let timer: NodeJS.Timeout;
+  const capturePageTextures = useCallback(async () => {
+    if (!frontCaptureRef.current || !backCaptureRef.current) {
+      return;
+    }
 
-    const capture = async () => {
-      if (!frontCaptureRef.current || !backCaptureRef.current) {
-        return;
+    const opts = {
+      useCORS: true,
+      backgroundColor: theme.mode === "dark" ? "#181b19" : "#ffffff",
+      scale: Math.min(1.25, window.devicePixelRatio || 1),
+      logging: false,
+      imageTimeout: 0,
+    };
+
+    try {
+      const fc = await html2canvas(frontCaptureRef.current, opts);
+      const bc = await html2canvas(backCaptureRef.current, opts);
+
+      const ft = new THREE.CanvasTexture(fc);
+      ft.colorSpace = THREE.SRGBColorSpace;
+      ft.anisotropy = 4;
+      ft.needsUpdate = true;
+
+      const reveal = new THREE.CanvasTexture(bc);
+      reveal.colorSpace = THREE.SRGBColorSpace;
+      reveal.anisotropy = 4;
+      reveal.needsUpdate = true;
+
+      const bt = reveal.clone();
+      bt.colorSpace = THREE.SRGBColorSpace;
+      bt.anisotropy = 4;
+      bt.needsUpdate = true;
+      bt.wrapS = THREE.RepeatWrapping;
+      bt.repeat.x = -1;
+
+      setFrontTex((previous) => {
+        disposeTexture(previous);
+        return ft;
+      });
+      setBackTex((previous) => {
+        disposeTexture(previous);
+        return bt;
+      });
+      setRevealTex((previous) => {
+        disposeTexture(previous);
+        return reveal;
+      });
+    } catch (err) {
+      console.warn("Failed to gen textures", err);
+    } finally {
+      if (pendingMonthShiftRef.current) {
+        pendingMonthShiftRef.current = false;
+        finalizeFlip();
+        setIsSyncingMonth(false);
       }
+    }
+  }, [theme.mode]);
 
-      const opts = {
-        useCORS: true,
-        backgroundColor: theme.mode === "dark" ? "#181b19" : "#ffffff",
-        scale: 2,
-        logging: false,
-      };
+  useEffect(() => {
+    if (calendar.navigationMode !== "flip") {
+      return;
+    }
 
-      try {
-        const fc = await html2canvas(frontCaptureRef.current, opts);
-        const bc = await html2canvas(backCaptureRef.current, opts);
-
-        if (!active) {
-          return;
-        }
-
-        const ft = new THREE.CanvasTexture(fc);
-        ft.colorSpace = THREE.SRGBColorSpace;
-        ft.anisotropy = 8;
-        ft.needsUpdate = true;
-
-        const reveal = new THREE.CanvasTexture(bc);
-        reveal.colorSpace = THREE.SRGBColorSpace;
-        reveal.anisotropy = 8;
-        reveal.needsUpdate = true;
-
-        const bt = reveal.clone();
-        bt.colorSpace = THREE.SRGBColorSpace;
-        bt.anisotropy = 8;
-        bt.needsUpdate = true;
-        bt.wrapS = THREE.RepeatWrapping;
-        bt.repeat.x = -1;
-
-        setFrontTex((previous) => {
-          disposeTexture(previous);
-          return ft;
-        });
-        setBackTex((previous) => {
-          disposeTexture(previous);
-          return bt;
-        });
-        setRevealTex((previous) => {
-          disposeTexture(previous);
-          return reveal;
-        });
-      } catch (err) {
-        console.warn("Failed to gen textures", err);
-      } finally {
-        if (pendingMonthShiftRef.current) {
-          pendingMonthShiftRef.current = false;
-          finalizeFlip();
-          setIsSyncingMonth(false);
-        }
+    let active = true;
+    const runCapture = () => {
+      if (active) {
+        void capturePageTextures();
       }
     };
 
-    timer = setTimeout(() => {
-      void capture();
-    }, 150);
+    const timer = window.setTimeout(runCapture, 220);
 
     return () => {
       active = false;
-      clearTimeout(timer);
+      window.clearTimeout(timer);
     };
-  }, [currentPage, nextPage, theme.mode]);
+  }, [calendar.navigationMode, capturePageTextures, textureCaptureKey]);
+
+  useEffect(() => {
+    if (calendar.navigationMode === "flip" && frontTex && backTex && revealTex) {
+      setFlipCanvasMounted(true);
+    }
+  }, [backTex, calendar.navigationMode, frontTex, revealTex]);
+
+  useEffect(() => {
+    if (calendar.navigationMode !== "flip") {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void capturePageTextures();
+    }, 900);
+
+    return () => window.clearTimeout(timer);
+  }, [calendar.navigationMode, capturePageTextures, notesTextureVersion, textureCaptureKey]);
 
   useEffect(() => {
     textureCacheRef.current = { front: frontTex, back: backTex, reveal: revealTex };
@@ -498,9 +533,9 @@ export function WallCalendarApp() {
 
       stopAnimation();
       bounds.current = { w: rect.width || 440, h: rect.height || 600 };
+      setFlipCanvasMounted(true);
       isDragging.current = true;
       hasStartedDrag.current = false;
-      setIsHoveringCard(false);
       startY.current = e.clientY;
       grabRight.current = x > rect.width * 0.5;
       flipProgress.current = 0;
@@ -522,6 +557,7 @@ export function WallCalendarApp() {
         if (deltaY < -14) {
           hasStartedDrag.current = true;
           setIsFlippingActive(true);
+          setIsFlipSceneActive(true);
           startY.current = e.clientY + 14;
           flipProgress.current = 0.01;
           dragDisplayProgress.current = 0.01;
@@ -532,14 +568,13 @@ export function WallCalendarApp() {
 
       const newY = Math.max(0, e.clientY - el.getBoundingClientRect().top);
       const nextProgress = Math.max(0, Math.min(1, 1 - newY / bounds.current.h));
-      const filteredProgress = THREE.MathUtils.lerp(dragDisplayProgress.current, nextProgress, 0.72);
       const now = performance.now();
       const dt = Math.max(1, now - lastMoveTime.current) / 1000;
-      flipVelocity.current = (filteredProgress - lastMoveProgress.current) / dt;
+      flipVelocity.current = (nextProgress - lastMoveProgress.current) / dt;
       lastMoveTime.current = now;
-      lastMoveProgress.current = filteredProgress;
-      dragDisplayProgress.current = filteredProgress;
-      flipProgress.current = filteredProgress;
+      lastMoveProgress.current = nextProgress;
+      dragDisplayProgress.current = nextProgress;
+      flipProgress.current = nextProgress;
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -550,6 +585,9 @@ export function WallCalendarApp() {
       isDragging.current = false;
       const shouldSnap = hasStartedDrag.current;
       isAnimating.current = shouldSnap;
+      if (shouldSnap) {
+        setIsFlipSceneActive(true);
+      }
 
       if (!shouldSnap) {
         if (el.hasPointerCapture(e.pointerId)) {
@@ -559,7 +597,7 @@ export function WallCalendarApp() {
         return;
       }
 
-      const target = flipProgress.current > 0.2 || flipVelocity.current > 0.92 ? 1 : 0;
+      const target = flipProgress.current > 0.18 || flipVelocity.current > 0.75 ? 1 : 0;
       if (el.hasPointerCapture(e.pointerId)) {
         el.releasePointerCapture(e.pointerId);
       }
@@ -573,8 +611,8 @@ export function WallCalendarApp() {
         const dt = Math.min(0.02, (now - previousTime) / 1000);
         previousTime = now;
 
-        const stiffness = 76;
-        const damping = 12.6;
+        const stiffness = 88;
+        const damping = 11.5;
         const dist = target - flipProgress.current;
         const acceleration = dist * stiffness - flipVelocity.current * damping;
 
@@ -734,8 +772,8 @@ export function WallCalendarApp() {
 
   const monthDate = parseMonthKey(calendar.visibleMonth);
 
-  // 44 coil rings across the top binding strip
-  const rings = Array.from({ length: 44 });
+  // Spiral binding rings across the top strip
+  const rings = Array.from({ length: 28 });
 
   const activeRangeStart = calendar.draftRangeStart;
   const pendingRangeDays =
@@ -754,7 +792,7 @@ export function WallCalendarApp() {
     <main className="relative min-h-screen overflow-x-hidden overflow-y-auto transition-colors duration-300 md:h-screen md:overflow-hidden">
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-0 bg-white/10 backdrop-blur-[1px] dark:bg-black/12"
+        className="pointer-events-none absolute inset-0 z-0 bg-white/[0.06] dark:bg-black/20"
       />
       <button
         type="button"
@@ -788,27 +826,19 @@ export function WallCalendarApp() {
         ref={containerRef}
         className="relative z-10 mx-auto flex min-h-screen max-w-[1480px] items-center justify-center overflow-visible px-3 pb-6 pt-3 sm:px-6 lg:px-10 md:h-screen md:items-start md:overflow-visible md:pt-4 md:pb-6"
       >
-        <AnimatePresence>
-          {activeRangeStart && (
-            <motion.div
-              initial={{ y: -16, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: -16, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="pointer-events-none fixed inset-x-0 top-4 z-40 mx-auto w-[min(calc(100vw-2rem),520px)] rounded-2xl border border-line bg-card/95 px-4 py-3 text-center shadow-[0_16px_36px_rgba(0,0,0,0.14)] backdrop-blur-md"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-ink/45">Range selection</p>
-              <p className="mt-1 text-sm font-semibold text-ink">
-                Start: {activeRangeStart}. Click another date to finish the range.
-              </p>
-              <p className="mt-1 text-xs text-ink/60">
-                {calendar.hoverRange
-                  ? `${pendingRangeDays} day span preview`
-                  : "Move across dates to preview the range. You can also Ctrl/Cmd-click any date to start a range instantly."}
-              </p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {activeRangeStart ? (
+          <div className="calendar-range-banner pointer-events-none fixed inset-x-0 top-4 z-40 mx-auto w-[min(calc(100vw-2rem),520px)] rounded-2xl border border-line bg-card px-4 py-3 text-center shadow-[0_16px_36px_rgba(0,0,0,0.14)]">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-ink/45">Range selection</p>
+            <p className="mt-1 text-sm font-semibold text-ink">
+              Start: {activeRangeStart}. Click another date to finish the range.
+            </p>
+            <p className="mt-1 text-xs text-ink/60">
+              {calendar.hoverRange
+                ? `${pendingRangeDays} day span preview`
+                : "Move across dates to preview the range. You can also Ctrl/Cmd-click any date to start a range instantly."}
+            </p>
+          </div>
+        ) : null}
 
         <div className="calendar-product-shell relative">
           <div className="pointer-events-none absolute -top-12 left-1/2 z-20 -translate-x-1/2 md:hidden">
@@ -842,12 +872,6 @@ export function WallCalendarApp() {
             <div
               ref={hangingBodyRef}
               className="calendar-hanging-body"
-              onPointerEnter={() => {
-                if (!isFlippingActive && !isDragging.current && !isAnimating.current) {
-                  setIsHoveringCard(true);
-                }
-              }}
-              onPointerLeave={() => setIsHoveringCard(false)}
             >
               <div
                 className="calendar-card relative z-10 mx-auto mt-0 w-full max-w-[440px] rounded-none border-0 bg-card shadow-[0_30px_60px_rgba(0,0,0,0.25),0_10px_20px_rgba(0,0,0,0.15)] transition-shadow duration-300"
@@ -936,7 +960,7 @@ export function WallCalendarApp() {
                     />
                   </div>
 
-	                  {isFlipNavigation ? (
+	                  {isFlipNavigation && flipCanvasMounted ? (
 	                    <div
 	                      className="pointer-events-none absolute left-1/2 top-0 z-[120] -translate-x-1/2"
 	                      style={{
@@ -944,15 +968,15 @@ export function WallCalendarApp() {
 	                        height: bounds.current.h + 220,
 	                        marginTop: -70,
 	                        overflow: "visible",
-	                        willChange: "transform, opacity",
 	                        opacity: isFlippingActive ? 1 : 0,
 	                        visibility: isFlippingActive ? "visible" : "hidden",
-	                        transition: isFlippingActive ? "none" : "opacity 120ms ease",
+	                        transition: isFlippingActive ? "none" : "opacity 100ms ease",
 	                      }}
 	                    >
 	                      <Canvas
-	                        dpr={[1, 2]}
-	                        gl={{ antialias: true, alpha: true }}
+	                        dpr={[1, canvasDpr]}
+	                        frameloop={isFlipSceneActive ? "always" : "never"}
+	                        gl={{ antialias: false, alpha: true, powerPreference: "high-performance" }}
 	                        orthographic
 	                        camera={{ position: [0, 0, 500], zoom: 1, near: 0.1, far: 2000 }}
 	                      >
@@ -965,6 +989,8 @@ export function WallCalendarApp() {
 	                            height={bounds.current.h}
 	                            flipProgress={flipProgress}
 	                            grabRight={grabRight}
+	                            isDragging={isDragging}
+	                            isAnimating={isAnimating}
 	                          />
 	                        </group>
 	                      </Canvas>
@@ -1038,173 +1064,132 @@ export function WallCalendarApp() {
           <ChevronLeft size={22} strokeWidth={2.5} />
         </button>
 
-        <AnimatePresence>
-          {showSettings && (
-            <>
-              <motion.div
-                aria-hidden="true"
-                className="calendar-overlay-backdrop absolute inset-0 z-40 cursor-pointer bg-black/20 backdrop-blur-sm dark:bg-black/40"
-                onClick={() => setShowSettings(false)}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+        <OverlayPortal
+          open={showSettings}
+          onClose={() => setShowSettings(false)}
+          side="left"
+          panelClassName="!w-[min(90vw,380px)]"
+          ariaLabel="Close settings"
+        >
+          <div className="flex items-center justify-between border-b border-line px-5 py-4">
+            <div>
+              <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-ink/40">Preferences</p>
+              <h2 className="mt-0.5 text-xl font-semibold text-ink">Settings</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSettings(false)}
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-paper/50 text-ink/60 transition-all hover:border-accent/50 hover:text-accent active:scale-95"
+              aria-label="Close settings"
+            >
+              <X size={16} strokeWidth={2} />
+            </button>
+          </div>
+
+          <div className="calendar-scrollbar flex-1 space-y-5 overflow-y-auto px-5 py-4">
+            <SettingsGroup title="Appearance">
+              <SettingsRow
+                label={theme.mode === "light" ? "Dark mode" : "Light mode"}
+                icon={theme.mode === "light" ? <Moon size={14} strokeWidth={2} /> : <Sun size={14} strokeWidth={2} />}
+                onClick={() => theme.setTheme(theme.mode === "light" ? "dark" : "light")}
               />
-              <motion.aside
-                initial={{ x: "-100%", opacity: 0.5 }}
-                animate={{ x: 0, opacity: 1 }}
-                exit={{ x: "-100%", opacity: 0.5 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                className="calendar-overlay-panel absolute bottom-0 left-0 top-0 z-50 flex w-[90vw] max-w-[380px] flex-col border-r border-line bg-card shadow-2xl"
-              >
-                <div className="flex items-center justify-between border-b border-line px-5 py-4">
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-ink/40">Preferences</p>
-                    <h2 className="mt-0.5 text-xl font-semibold text-ink">Settings</h2>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowSettings(false)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-paper/50 text-ink/60 transition-all hover:border-accent/50 hover:text-accent active:scale-95"
-                    aria-label="Close settings"
-                  >
-                    <X size={16} strokeWidth={2} />
-                  </button>
-                </div>
-
-	                <div className="calendar-scrollbar flex-1 space-y-5 overflow-y-auto px-5 py-4">
-	                  <SettingsGroup title="Appearance">
-                    <SettingsRow
-                      label={theme.mode === "light" ? "Dark mode" : "Light mode"}
-                      icon={theme.mode === "light" ? <Moon size={14} strokeWidth={2} /> : <Sun size={14} strokeWidth={2} />}
-                      onClick={() => theme.setTheme(theme.mode === "light" ? "dark" : "light")}
-                    />
-                    <SettingsRow
-                      label={theme.soundEnabled ? "Sound on" : "Sound off"}
-                      icon={theme.soundEnabled ? <Volume2 size={14} strokeWidth={2} /> : <VolumeX size={14} strokeWidth={2} />}
-                      onClick={() => theme.setSoundEnabled(!theme.soundEnabled)}
-	                    />
-	                  </SettingsGroup>
-
-	                  <SettingsGroup title="Navigation">
-	                    <SettingsSegmentedControl
-	                      label="Month switching"
-	                      value={calendar.navigationMode}
-	                      options={[
-	                        { value: "flip", label: "Flip animation" },
-	                        { value: "buttons", label: "Normal buttons" },
-	                      ]}
-	                      onChange={(value) => {
-	                        calendar.setNavigationMode(value as typeof calendar.navigationMode);
-	                        resetFlipInteraction();
-	                      }}
-	                    />
-	                  </SettingsGroup>
-
-	                  <SettingsGroup title="Actions">
-                    <SettingsRow label="Jump to today" icon={<CalendarDays size={14} strokeWidth={2} />} onClick={jumpToToday} />
-                    <SettingsRow
-                      label="Keyboard shortcuts"
-                      icon={<Keyboard size={14} strokeWidth={2} />}
-                      onClick={() => {
-                        setShowSettings(false);
-                        setShowShortcuts(true);
-                      }}
-                    />
-                    <SettingsRow label="Undo" icon={<Undo2 size={14} strokeWidth={2} />} onClick={calendar.undo} />
-                    <SettingsRow label="Redo" icon={<Redo2 size={14} strokeWidth={2} />} onClick={calendar.redo} />
-                  </SettingsGroup>
-
-	                  <SettingsGroup title="Customize">
-	                    <div className="space-y-2">
-	                      <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Accent color</label>
-	                      <select
-	                        value={theme.accent}
-	                        onChange={(event) => theme.setAccent(event.target.value as typeof theme.accent)}
-	                        className="w-full rounded-lg border border-line bg-paper/50 px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
-	                      >
-	                        <option value="teal">Teal</option>
-	                        <option value="brick">Brick</option>
-	                        <option value="amber">Amber</option>
-	                        <option value="slate">Slate</option>
-	                      </select>
-	                    </div>
-	                  </SettingsGroup>
-                </div>
-              </motion.aside>
-            </>
-          )}
-        </AnimatePresence>
-
-        <AnimatePresence>
-          {calendar.notesPanelOpen && (
-            <>
-              <motion.div
-                aria-hidden="true"
-                className="calendar-overlay-backdrop absolute inset-0 z-40 cursor-pointer bg-black/20 backdrop-blur-sm dark:bg-black/40"
-                onClick={() => calendar.setNotesPanelOpen(false)}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+              <SettingsRow
+                label={theme.soundEnabled ? "Sound on" : "Sound off"}
+                icon={theme.soundEnabled ? <Volume2 size={14} strokeWidth={2} /> : <VolumeX size={14} strokeWidth={2} />}
+                onClick={() => theme.setSoundEnabled(!theme.soundEnabled)}
               />
-              <motion.div
-                initial={{ x: "100%", opacity: 0.5 }}
-                animate={{ x: 0, opacity: 1 }}
-                exit={{ x: "100%", opacity: 0.5 }}
-                transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-                className="calendar-overlay-panel absolute bottom-0 right-0 top-0 z-50 flex w-[90vw] max-w-[420px] flex-col border-l border-line bg-card shadow-2xl"
-              >
-                <NotesPanel className="h-full flex-1 rounded-none border-0" onClose={() => calendar.setNotesPanelOpen(false)} />
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>
+            </SettingsGroup>
 
-        <AnimatePresence>
-          {showShortcuts && (
-            <>
-              <motion.div
-                aria-hidden="true"
-                className="calendar-overlay-backdrop absolute inset-0 z-[52] cursor-pointer bg-black/20 backdrop-blur-sm dark:bg-black/40"
-                onClick={() => setShowShortcuts(false)}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+            <SettingsGroup title="Navigation">
+              <SettingsSegmentedControl
+                label="Month switching"
+                value={calendar.navigationMode}
+                options={[
+                  { value: "flip", label: "Flip animation" },
+                  { value: "buttons", label: "Normal buttons" },
+                ]}
+                onChange={(value) => {
+                  calendar.setNavigationMode(value as typeof calendar.navigationMode);
+                  resetFlipInteraction();
+                  if (value === "flip") {
+                    setFlipCanvasMounted(false);
+                  }
+                }}
               />
-              <div className="fixed inset-0 z-[53] flex items-center justify-center p-4 sm:p-6">
-                <motion.div
-                  initial={{ y: 18, opacity: 0, scale: 0.98 }}
-                  animate={{ y: 0, opacity: 1, scale: 1 }}
-                  exit={{ y: 18, opacity: 0, scale: 0.98 }}
-                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                  className="w-full max-w-[400px] rounded-[1.5rem] border border-line bg-card p-4 shadow-[0_24px_60px_rgba(0,0,0,0.2)] sm:p-5"
+            </SettingsGroup>
+
+            <SettingsGroup title="Actions">
+              <SettingsRow label="Jump to today" icon={<CalendarDays size={14} strokeWidth={2} />} onClick={jumpToToday} />
+              <SettingsRow
+                label="Keyboard shortcuts"
+                icon={<Keyboard size={14} strokeWidth={2} />}
+                onClick={() => {
+                  setShowSettings(false);
+                  setShowShortcuts(true);
+                }}
+              />
+              <SettingsRow label="Undo" icon={<Undo2 size={14} strokeWidth={2} />} onClick={calendar.undo} />
+              <SettingsRow label="Redo" icon={<Redo2 size={14} strokeWidth={2} />} onClick={calendar.redo} />
+            </SettingsGroup>
+
+            <SettingsGroup title="Customize">
+              <div className="space-y-2">
+                <label className="block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink/50">Accent color</label>
+                <select
+                  value={theme.accent}
+                  onChange={(event) => theme.setAccent(event.target.value as typeof theme.accent)}
+                  className="w-full rounded-lg border border-line bg-paper/50 px-3 py-2 text-sm font-medium text-ink outline-none transition-colors focus:border-accent"
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-ink/45">Keyboard shortcuts</p>
-                      <h3 className="mt-1 text-lg font-semibold text-ink">Quick controls</h3>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowShortcuts(false)}
-                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-paper/50 text-ink/60 transition-colors hover:border-accent hover:text-accent"
-                      aria-label="Close keyboard shortcuts"
-                    >
-                      <X size={16} strokeWidth={2} />
-                    </button>
-                  </div>
-
-                  <div className="mt-4 space-y-2.5">
-                    <ShortcutRow keys="Ctrl/Cmd + Click" description="Start a date range from any day cell." />
-                    <ShortcutRow keys="Click another date" description="Finish the active range selection." />
-                    <ShortcutRow keys="Arrow Left" description="Go to the previous month." />
-                    <ShortcutRow keys="Arrow Right" description="Go to the next month." />
-                    <ShortcutRow keys="Esc" description="Close menus, notes, settings, or shortcuts." />
-                  </div>
-                </motion.div>
+                  <option value="teal">Teal</option>
+                  <option value="brick">Brick</option>
+                  <option value="amber">Amber</option>
+                  <option value="slate">Slate</option>
+                </select>
               </div>
-            </>
-          )}
-        </AnimatePresence>
+            </SettingsGroup>
+          </div>
+        </OverlayPortal>
+
+        <OverlayPortal
+          open={calendar.notesPanelOpen}
+          onClose={() => calendar.setNotesPanelOpen(false)}
+          side="right"
+          ariaLabel="Close notes"
+        >
+          <NotesPanel className="h-full flex-1 rounded-none border-0" onClose={() => calendar.setNotesPanelOpen(false)} />
+        </OverlayPortal>
+
+        <OverlayPortal
+          open={showShortcuts}
+          onClose={() => setShowShortcuts(false)}
+          side="center"
+          ariaLabel="Close keyboard shortcuts"
+        >
+          <div className="rounded-[1.5rem] border border-line bg-card p-4 shadow-[0_24px_60px_rgba(0,0,0,0.2)] sm:p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-ink/45">Keyboard shortcuts</p>
+                <h3 className="mt-1 text-lg font-semibold text-ink">Quick controls</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShortcuts(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-paper/50 text-ink/60 transition-colors hover:border-accent hover:text-accent"
+                aria-label="Close keyboard shortcuts"
+              >
+                <X size={16} strokeWidth={2} />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-2.5">
+              <ShortcutRow keys="Ctrl/Cmd + Click" description="Start a date range from any day cell." />
+              <ShortcutRow keys="Click another date" description="Finish the active range selection." />
+              <ShortcutRow keys="Arrow Left" description="Go to the previous month." />
+              <ShortcutRow keys="Arrow Right" description="Go to the next month." />
+              <ShortcutRow keys="Esc" description="Close menus, notes, settings, or shortcuts." />
+            </div>
+          </div>
+        </OverlayPortal>
       </div>
 
     
@@ -1233,7 +1218,7 @@ export function WallCalendarApp() {
  *  2. Drawing the paper binding strip over it (opaque, matches the card colour).
  *  3. Drawing the top (front) arc last — it's lighter with a bright highlight stripe.
  */
-function CoilRing() {
+const CoilRing = memo(function CoilRing() {
   // SVG canvas: 8 px wide, 42 px tall
   // The ring outer diameter is ~8 px, loop height is ~20 px.
   // Centre of the paper binding strip sits at y=20 (mid-canvas).
@@ -1352,7 +1337,7 @@ function CoilRing() {
       />
     </svg>
   );
-}
+});
 
 function SettingsGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (

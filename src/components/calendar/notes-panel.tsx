@@ -148,7 +148,7 @@ export function NotesPanel({
 
   return (
     <aside className={cn("flex flex-col overflow-hidden bg-card", className)}>
-      <header className="z-10 flex-none border-b border-line bg-card/95 px-6 py-5 backdrop-blur-sm">
+      <header className="z-10 flex-none border-b border-line bg-card px-6 py-5">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-muted">Workspace</p>

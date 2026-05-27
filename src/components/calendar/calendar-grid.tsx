@@ -1,7 +1,6 @@
 "use client";
 
 import { memo } from "react";
-import { motion } from "framer-motion";
 import { CalendarEvent } from "@/types/calendar";
 import { toIsoDate } from "@/lib/date";
 import { cn } from "@/lib/utils";
@@ -150,9 +149,8 @@ const CalendarCell = memo(function CalendarCell({
 	  const holidayTitle = holidayEvent?.title;
 	
 	  return (
-	    <motion.button
+	    <button
       type="button"
-      layout
       data-calendar-interactive={interactive ? "true" : undefined}
       disabled={!interactive || !metadata.inMonth}
       onPointerDown={() => onPointerStart?.(isoDate)}
@@ -219,6 +217,6 @@ const CalendarCell = memo(function CalendarCell({
 	          {holidayTitle}
 	        </div>
 	      )}
-	    </motion.button>
+	    </button>
 	  );
 	});

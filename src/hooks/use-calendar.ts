@@ -111,14 +111,12 @@ export function useCalendar() {
       rangeStart: boolean;
       rangeEnd: boolean;
       inConfirmedRange: boolean;
-      inHoverRange: boolean;
       noteCount: number;
     }>>((accumulator, day) => {
       const isoDate = toIsoDate(day);
       const inConfirmedRange = state.ranges.some((range) => isDateWithinRange(isoDate, range));
       const rangeStart = state.ranges.some((range) => range.start === isoDate);
       const rangeEnd = state.ranges.some((range) => range.end === isoDate);
-      const inHoverRange = hoverRange ? isDateWithinRange(isoDate, hoverRange) : false;
 
       accumulator[isoDate] = {
         inMonth: monthContainsDate(state.visibleMonth, isoDate),
@@ -127,13 +125,12 @@ export function useCalendar() {
         rangeStart,
         rangeEnd,
         inConfirmedRange,
-        inHoverRange,
         noteCount: notesByDate[isoDate] ?? 0,
       };
 
       return accumulator;
     }, {});
-  }, [hoverRange, notesByDate, state.ranges, state.selectedDate, state.visibleMonth, weeks]);
+  }, [notesByDate, state.ranges, state.selectedDate, state.visibleMonth, weeks]);
 
   return {
     ...state,
