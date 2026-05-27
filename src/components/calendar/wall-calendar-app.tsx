@@ -99,6 +99,7 @@ export function WallCalendarApp() {
   const isDragging = useRef(false);
   const bounds = useRef({ w: 440, h: 600 });
   const startY = useRef(0);
+  const cardTopRef = useRef(0);
   const hasStartedDrag = useRef(false);
   const isAnimating = useRef(false);
   const flipVelocity = useRef(0);
@@ -107,7 +108,8 @@ export function WallCalendarApp() {
   const dragDisplayProgress = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
   const suspensionFrameRef = useRef<number | null>(null);
-  const pendingMonthShiftRef = useRef(false);
+  const pendingNextCaptureRef = useRef(false);
+  const suppressFullCaptureRef = useRef(false);
   const suspensionDraggingRef = useRef(false);
   const suspensionPointerIdRef = useRef<number | null>(null);
   const suspensionStateRef = useRef({ x: 0, y: 0, vx: 0, vy: 0 });
@@ -140,7 +142,7 @@ export function WallCalendarApp() {
     return `${noteStamp}|${rangeStamp}|${imageStamp}`;
   }, [calendar.monthImages, calendar.notes, calendar.ranges]);
   const canvasDpr = useMemo(
-    () => Math.min(1.75, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1),
+    () => Math.min(1.25, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1),
     []
   );
 
@@ -267,7 +269,7 @@ export function WallCalendarApp() {
     setIsFlipSceneActive(false);
   };
 
-  const capturePageTextures = useCallback(async () => {
+  const capturePageTextures = useCallback(async (mode: "full" | "next-only" = "full") => {
     if (!frontCaptureRef.current || !backCaptureRef.current) {
       return;
     }
@@ -275,36 +277,39 @@ export function WallCalendarApp() {
     const opts = {
       useCORS: true,
       backgroundColor: theme.mode === "dark" ? "#181b19" : "#ffffff",
-      scale: Math.min(1.25, window.devicePixelRatio || 1),
+      scale: Math.min(1, window.devicePixelRatio || 1),
       logging: false,
       imageTimeout: 0,
     };
 
     try {
-      const fc = await html2canvas(frontCaptureRef.current, opts);
+      const fc = mode === "full" ? await html2canvas(frontCaptureRef.current, opts) : null;
       const bc = await html2canvas(backCaptureRef.current, opts);
 
-      const ft = new THREE.CanvasTexture(fc);
-      ft.colorSpace = THREE.SRGBColorSpace;
-      ft.anisotropy = 4;
-      ft.needsUpdate = true;
+      if (fc) {
+        const ft = new THREE.CanvasTexture(fc);
+        ft.colorSpace = THREE.SRGBColorSpace;
+        ft.anisotropy = 2;
+        ft.needsUpdate = true;
+
+        setFrontTex((previous) => {
+          disposeTexture(previous);
+          return ft;
+        });
+      }
 
       const reveal = new THREE.CanvasTexture(bc);
       reveal.colorSpace = THREE.SRGBColorSpace;
-      reveal.anisotropy = 4;
+      reveal.anisotropy = 2;
       reveal.needsUpdate = true;
 
       const bt = reveal.clone();
       bt.colorSpace = THREE.SRGBColorSpace;
-      bt.anisotropy = 4;
+      bt.anisotropy = 2;
       bt.needsUpdate = true;
       bt.wrapS = THREE.RepeatWrapping;
       bt.repeat.x = -1;
 
-      setFrontTex((previous) => {
-        disposeTexture(previous);
-        return ft;
-      });
       setBackTex((previous) => {
         disposeTexture(previous);
         return bt;
@@ -315,14 +320,50 @@ export function WallCalendarApp() {
       });
     } catch (err) {
       console.warn("Failed to gen textures", err);
-    } finally {
-      if (pendingMonthShiftRef.current) {
-        pendingMonthShiftRef.current = false;
-        finalizeFlip();
-        setIsSyncingMonth(false);
-      }
     }
   }, [theme.mode]);
+
+  const completeSuccessfulFlip = useCallback(() => {
+    stopAnimation();
+    flipProgress.current = 0;
+    flipVelocity.current = 0;
+    hasStartedDrag.current = false;
+    isAnimating.current = false;
+    isDragging.current = false;
+    dragDisplayProgress.current = 0;
+    setIsFlippingActive(false);
+    setIsFlipSceneActive(false);
+
+    const { front: oldFront, reveal } = textureCacheRef.current;
+    if (reveal) {
+      setFrontTex((previous) => {
+        if (previous !== reveal) {
+          disposeTexture(previous);
+        }
+        return reveal;
+      });
+    } else {
+      disposeTexture(oldFront);
+    }
+
+    setIsSyncingMonth(true);
+    suppressFullCaptureRef.current = true;
+    pendingNextCaptureRef.current = true;
+    calendar.shiftMonth(1);
+    void sound.playMonthTurn();
+  }, [calendar, sound]);
+
+  useEffect(() => {
+    if (calendar.navigationMode !== "flip" || !pendingNextCaptureRef.current) {
+      return;
+    }
+
+    pendingNextCaptureRef.current = false;
+    void capturePageTextures("next-only").finally(() => {
+      suppressFullCaptureRef.current = false;
+      setIsSyncingMonth(false);
+    });
+  }, [calendar.navigationMode, calendar.visibleMonth, capturePageTextures]);
 
   useEffect(() => {
     if (calendar.navigationMode !== "flip") {
@@ -331,7 +372,7 @@ export function WallCalendarApp() {
 
     let active = true;
     const runCapture = () => {
-      if (active) {
+      if (active && !suppressFullCaptureRef.current) {
         void capturePageTextures();
       }
     };
@@ -356,7 +397,9 @@ export function WallCalendarApp() {
     }
 
     const timer = window.setTimeout(() => {
-      void capturePageTextures();
+      if (!suppressFullCaptureRef.current) {
+        void capturePageTextures();
+      }
     }, 900);
 
     return () => window.clearTimeout(timer);
@@ -532,7 +575,14 @@ export function WallCalendarApp() {
       }
 
       stopAnimation();
+      stopSuspensionAnimation();
+      suspensionDraggingRef.current = false;
+      suspensionPointerIdRef.current = null;
+      suspensionTargetRef.current = { x: 0, y: 0 };
+      suspensionStateRef.current = { x: 0, y: 0, vx: 0, vy: 0 };
+      applySuspensionTransform();
       bounds.current = { w: rect.width || 440, h: rect.height || 600 };
+      cardTopRef.current = rect.top;
       setFlipCanvasMounted(true);
       isDragging.current = true;
       hasStartedDrag.current = false;
@@ -566,7 +616,7 @@ export function WallCalendarApp() {
         }
       }
 
-      const newY = Math.max(0, e.clientY - el.getBoundingClientRect().top);
+      const newY = Math.max(0, e.clientY - cardTopRef.current);
       const nextProgress = Math.max(0, Math.min(1, 1 - newY / bounds.current.h));
       const now = performance.now();
       const dt = Math.max(1, now - lastMoveTime.current) / 1000;
@@ -608,33 +658,16 @@ export function WallCalendarApp() {
           return;
         }
 
-        const dt = Math.min(0.02, (now - previousTime) / 1000);
+        const dt = Math.min(0.032, (now - previousTime) / 1000);
         previousTime = now;
 
-        const stiffness = 88;
-        const damping = 11.5;
-        const dist = target - flipProgress.current;
-        const acceleration = dist * stiffness - flipVelocity.current * damping;
+        const current = flipProgress.current;
+        const remaining = target - current;
 
-        flipVelocity.current += acceleration * dt;
-        flipProgress.current = THREE.MathUtils.clamp(flipProgress.current + flipVelocity.current * dt, 0, 1);
-
-        if (flipProgress.current === 0 || flipProgress.current === 1) {
-          flipVelocity.current *= 0.5;
-        }
-
-        if (Math.abs(dist) < 0.0022 && Math.abs(flipVelocity.current) < 0.02) {
+        if (Math.abs(remaining) < 0.004) {
+          flipProgress.current = target;
           if (target === 1) {
-            stopAnimation();
-            flipProgress.current = 1;
-            flipVelocity.current = 0;
-            hasStartedDrag.current = false;
-            isAnimating.current = false;
-            isDragging.current = false;
-            pendingMonthShiftRef.current = true;
-            setIsSyncingMonth(true);
-            calendar.shiftMonth(1);
-            void sound.playMonthTurn();
+            completeSuccessfulFlip();
           } else {
             finalizeFlip();
           }
@@ -642,6 +675,8 @@ export function WallCalendarApp() {
           return;
         }
 
+        const ease = 1 - Math.exp(-26 * dt);
+        flipProgress.current = THREE.MathUtils.clamp(current + remaining * ease, 0, 1);
         animationFrameRef.current = requestAnimationFrame(finishSnap);
       };
 
@@ -672,7 +707,7 @@ export function WallCalendarApp() {
       el.removeEventListener("lostpointercapture", onLostPointerCapture);
       stopAnimation();
     };
-  }, [backTex, calendar, frontTex, isSyncingMonth, revealTex, sound]);
+  }, [applySuspensionTransform, backTex, completeSuccessfulFlip, frontTex, isSyncingMonth, revealTex, sound, stopSuspensionAnimation]);
 
   const navigateMonth = useCallback((amount: number) => {
     if (isSyncingMonth || isFlippingActive) {
@@ -964,9 +999,9 @@ export function WallCalendarApp() {
 	                    <div
 	                      className="pointer-events-none absolute left-1/2 top-0 z-[120] -translate-x-1/2"
 	                      style={{
-	                        width: bounds.current.w + 220,
-	                        height: bounds.current.h + 220,
-	                        marginTop: -70,
+	                        width: bounds.current.w + 120,
+	                        height: bounds.current.h + 120,
+	                        marginTop: -50,
 	                        overflow: "visible",
 	                        opacity: isFlippingActive ? 1 : 0,
 	                        visibility: isFlippingActive ? "visible" : "hidden",
